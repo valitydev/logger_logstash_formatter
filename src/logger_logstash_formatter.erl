@@ -49,7 +49,7 @@ format(Event, Config) ->
     Severity = get_severity(Event, Config),
     Message = get_message(Event, Config),
     {RedactedMsg, RedactedMeta} = redact(Message, Meta, Config),
-    PrintableMeta = meta_to_printable(RedactedMeta, Config),
+    PrintableMeta = meta_to_printable(normalize_otel_meta(RedactedMeta), Config),
     Formatted = create_message(RedactedMsg, Severity, TimeStamp, PrintableMeta),
     Encoded = jsx:encode(Formatted),
     [Encoded, <<"\n">>].
@@ -261,6 +261,18 @@ traverse_and_redact(Binary, Regexes) when is_binary(Binary) ->
     redact_all(Binary, Regexes);
 traverse_and_redact(Item, _) ->
     Item.
+
+%% @doc See `otel_span:hex_span_ctx/1`
+normalize_otel_meta(Meta) ->
+    maps:map(
+        fun
+            (otel_trace_id, V) when is_list(V) -> list_to_binary(V);
+            (otel_span_id, V) when is_list(V) -> list_to_binary(V);
+            (otel_trace_flags, V) when is_list(V) -> list_to_binary(V);
+            (_K, V) -> V
+        end,
+        Meta
+    ).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -630,5 +642,22 @@ broken_unicode_test() ->
         <<"{\"@severity\":\"info\",\"@timestamp\":\"2020-02-17T17:02:39.142512Z\",\"message\":\"**\"}">>,
         <<"\n">>
     ] = format(Event, #{message_redaction_regex_list => [".*"]}).
+
+-spec normalize_otel_meta_test() -> _.
+normalize_otel_meta_test() ->
+    ?assertEqual(
+        #{
+            otel_span_id => <<"8647159795def2aa">>,
+            otel_trace_flags => <<"01">>,
+            otel_trace_id => <<"2f878b9a6503762b">>,
+            some_meta => <<"SOME VALUE">>
+        },
+        normalize_otel_meta(#{
+            some_meta => <<"SOME VALUE">>,
+            otel_trace_id => [50, 102, 56, 55, 56, 98, 57, 97, 54, 53, 48, 51, 55, 54, 50, 98],
+            otel_trace_flags => [48, 49],
+            otel_span_id => [56, 54, 52, 55, 49, 53, 57, 55, 57, 53, 100, 101, 102, 50, 97, 97]
+        })
+    ).
 
 -endif.
